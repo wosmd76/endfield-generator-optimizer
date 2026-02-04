@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 
 function App() {
     const [powerX, setPowerX] = useState(2500);
@@ -171,6 +172,7 @@ function App() {
 
     return (
         <div className="p-4 bg-gray-900 text-gray-100 min-h-screen text-sm">
+            <Analytics />
             <h1 className="text-xl font-bold mb-4 text-cyan-400">열에너지 뱅크 최적화</h1>
 
             <div className="mb-4 p-3 bg-gray-800 rounded grid grid-cols-2 md:grid-cols-3 gap-3">
