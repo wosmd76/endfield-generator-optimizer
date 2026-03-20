@@ -9,7 +9,70 @@ function App() {
 
     const R = 0.025;
     const B = 0.5;
+    const TICK = 2.0;
+    const BUFFER_MAX = 100000;
     const SECONDS_PER_DAY = 86400;
+
+    const gcdFn = (a, b) => b === 0 ? a : gcdFn(b, a % b);
+    const lcmFn = (a, b) => (a / gcdFn(a, b)) * b;
+
+    const genPattern = (a, b) => {
+        const period = Math.pow(2, a) * Math.pow(3, b);
+        const pattern = new Uint8Array(period);
+        for (let t = 0; t < period; t++) {
+            let pass = true;
+            let idx = t;
+            for (let i = 0; i < a && pass; i++) {
+                if (idx % 2 !== 0) pass = false;
+                idx = Math.floor(idx / 2);
+            }
+            for (let i = 0; i < b && pass; i++) {
+                if (idx % 3 !== 0) pass = false;
+                idx = Math.floor(idx / 3);
+            }
+            pattern[t] = pass ? 1 : 0;
+        }
+        return pattern;
+    };
+
+    const maxConsecutiveZeros = (pattern) => {
+        const n = pattern.length;
+        if (n === 0) return 0;
+        if (!pattern.includes(1)) return Infinity;
+        let maxGap = 0;
+        let cur = 0;
+        for (let i = 0; i < n * 2; i++) {
+            if (pattern[i % n] === 0) {
+                cur++;
+                if (cur > maxGap) maxGap = cur;
+            } else {
+                cur = 0;
+            }
+        }
+        return Math.min(maxGap, n - 1);
+    };
+
+    const orPatterns = (p1, p2) => {
+        const lcmLen = lcmFn(p1.length, p2.length);
+        const result = new Uint8Array(lcmLen);
+        for (let t = 0; t < lcmLen; t++) {
+            result[t] = (p1[t % p1.length] || p2[t % p2.length]) ? 1 : 0;
+        }
+        return result;
+    };
+
+    const checkBuffer = (pattern, actualSupplyPerSec, consumePerSec) => {
+        const surplus = actualSupplyPerSec >= consumePerSec - 1e-9;
+        const maxBlankTicks = maxConsecutiveZeros(pattern);
+        const maxBlankSec = maxBlankTicks * TICK;
+        const allowedBlankSec = BUFFER_MAX / consumePerSec;
+        return {
+            stable: maxBlankSec < allowedBlankSec,
+            surplus,
+            maxBlankSec,
+            allowedBlankSec
+        };
+    };
 
     const formatSplit = (a, b) => {
         const parts = [];
@@ -20,34 +83,30 @@ function App() {
         return <>{parts[0]} <span className="text-gray-500">x</span> {parts[1]}</>;
     };
 
-    const formatBestSingle = (r) => {
-        return (
-            <div>
-                <div className="text-lg font-bold text-white mb-1">1/{r.denom1}</div>
-                <div className="text-sm pl-2 border-l-2 border-cyan-500">
-                    <div className="flex items-center gap-1">
-                        <span className="text-gray-400">•</span> <span className="text-gray-400">최적해:</span> {formatSplit(r.a, r.b)}
-                    </div>
+    const formatBestSingle = (r) => (
+        <div>
+            <div className="text-lg font-bold text-white mb-1">1/{r.denom1}</div>
+            <div className="text-sm pl-2 border-l-2 border-cyan-500">
+                <div className="flex items-center gap-1">
+                    <span className="text-gray-400">•</span> <span className="text-gray-400">최적해:</span> {formatSplit(r.a, r.b)}
                 </div>
             </div>
-        );
-    };
+        </div>
+    );
 
-    const formatBestDual = (r) => {
-        return (
-            <div>
-                <div className="text-lg font-bold text-white mb-1">1/{r.denom1} + 1/{r.denom2}</div>
-                <div className="text-sm pl-2 border-l-2 border-cyan-500 flex flex-col gap-0.5">
-                    <div className="flex items-center gap-1">
-                        <span className="text-gray-400">•</span> <span className="text-gray-400">1/{r.denom1}:</span> {formatSplit(r.a, r.b)}
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <span className="text-gray-400">•</span> <span className="text-gray-400">1/{r.denom2}:</span> {formatSplit(r.c, r.d)}
-                    </div>
+    const formatBestDual = (r) => (
+        <div>
+            <div className="text-lg font-bold text-white mb-1">1/{r.denom1} + 1/{r.denom2}</div>
+            <div className="text-sm pl-2 border-l-2 border-cyan-500 flex flex-col gap-0.5">
+                <div className="flex items-center gap-1">
+                    <span className="text-gray-400">•</span> <span className="text-gray-400">1/{r.denom1}:</span> {formatSplit(r.a, r.b)}
+                </div>
+                <div className="flex items-center gap-1">
+                    <span className="text-gray-400">•</span> <span className="text-gray-400">1/{r.denom2}:</span> {formatSplit(r.c, r.d)}
                 </div>
             </div>
-        );
-    };
+        </div>
+    );
 
     const calculation = useMemo(() => {
         const netRequired = Math.max(0, powerX - baseP);
@@ -55,12 +114,12 @@ function App() {
         const remainder = netRequired % genA;
         const partialRatio = remainder / genA;
         const targetBeltRatio = partialRatio * (R / B);
-
-        return { netRequired, fullGens, remainder, partialRatio, targetBeltRatio };
+        const partialConsumePerSec = remainder;
+        return { netRequired, fullGens, remainder, partialRatio, targetBeltRatio, partialConsumePerSec };
     }, [powerX, genA, baseP]);
 
     const results = useMemo(() => {
-        const { partialRatio, targetBeltRatio, remainder } = calculation;
+        const { partialRatio, targetBeltRatio, remainder, partialConsumePerSec } = calculation;
 
         if (remainder === 0 || partialRatio <= 0) {
             return { single: [], dual: [], message: "부분 가동 발전기가 필요 없습니다." };
@@ -79,17 +138,26 @@ function App() {
         const dualResults = [];
 
         for (const f of fractions) {
-            if (f.value < targetBeltRatio - 1e-12) continue;
             const actualRatio = f.value * (B / R);
+            const clampedRatio = Math.min(1, actualRatio);
+            const actualSupplyPerSec = clampedRatio * genA;
             const batteryUsage = f.value * B;
-            singleResults.push({
-                a: f.a, b: f.b, c: null, d: null,
-                denom1: f.denom, denom2: null,
-                beltRatio: f.value,
-                actualRatio: Math.min(1, actualRatio),
-                batteryUsage,
-                k: f.value - targetBeltRatio
-            });
+            const pattern = genPattern(f.a, f.b);
+            const bufCheck = checkBuffer(pattern, actualSupplyPerSec, partialConsumePerSec);
+
+            // 공급 >= 소비 AND 버퍼 안정인 조합만 포함
+            if (f.value >= targetBeltRatio - 1e-12 && bufCheck.stable) {
+                singleResults.push({
+                    a: f.a, b: f.b, c: null, d: null,
+                    denom1: f.denom, denom2: null,
+                    beltRatio: f.value,
+                    actualRatio: clampedRatio,
+                    batteryUsage,
+                    k: f.value - targetBeltRatio,
+                    buffer: bufCheck,
+                    surplus: f.value >= targetBeltRatio - 1e-12
+                });
+            }
         }
 
         for (let i = 0; i < fractions.length; i++) {
@@ -97,28 +165,44 @@ function App() {
                 const f1 = fractions[i];
                 const f2 = fractions[j];
                 const sum = f1.value + f2.value;
-                if (sum < targetBeltRatio - 1e-12 || sum > 1) continue;
+                if (sum > 1) continue;
 
                 const actualRatio = sum * (B / R);
+                const clampedRatio = Math.min(1, actualRatio);
+                const actualSupplyPerSec = clampedRatio * genA;
                 const batteryUsage = sum * B;
-                dualResults.push({
-                    a: f1.a, b: f1.b, c: f2.a, d: f2.b,
-                    denom1: f1.denom, denom2: f2.denom,
-                    beltRatio: sum,
-                    actualRatio: Math.min(1, actualRatio),
-                    batteryUsage,
-                    k: sum - targetBeltRatio
-                });
+                const p1 = genPattern(f1.a, f1.b);
+                const p2 = genPattern(f2.a, f2.b);
+                const combined = orPatterns(p1, p2);
+                const bufCheck = checkBuffer(combined, actualSupplyPerSec, partialConsumePerSec);
+
+                // 공급 >= 소비 AND 버퍼 안정인 조합만 포함
+                if (sum >= targetBeltRatio - 1e-12 && bufCheck.stable) {
+                    dualResults.push({
+                        a: f1.a, b: f1.b, c: f2.a, d: f2.b,
+                        denom1: f1.denom, denom2: f2.denom,
+                        beltRatio: sum,
+                        actualRatio: clampedRatio,
+                        batteryUsage,
+                        k: sum - targetBeltRatio,
+                        buffer: bufCheck,
+                        surplus: sum >= targetBeltRatio - 1e-12
+                    });
+                }
             }
         }
 
-        singleResults.sort((a, b) => a.k - b.k);
-        dualResults.sort((a, b) => a.k - b.k);
+        const sortFn = (a, b) => {
+            if (a.buffer.stable !== b.buffer.stable) return a.buffer.stable ? -1 : 1;
+            return Math.abs(a.k) - Math.abs(b.k);
+        };
+        singleResults.sort(sortFn);
+        dualResults.sort(sortFn);
 
         return { single: singleResults.slice(0, 8), dual: dualResults.slice(0, 8), message: null };
     }, [calculation, maxDepth]);
 
-    const { netRequired, fullGens, remainder, partialRatio, targetBeltRatio } = calculation;
+    const { netRequired, fullGens, remainder, partialRatio } = calculation;
 
     const ResultSection = ({ data, title, isSingle }) => {
         if (!data || data.length === 0) return null;
@@ -137,6 +221,17 @@ function App() {
                         <span>부분기 배터리: <span className="text-orange-400">{best.batteryUsage.toFixed(5)}/s</span></span>
                         <span>초과 발전량: <span className="text-red-400">{(best.actualRatio * genA - calculation.remainder).toFixed(1)}</span></span>
                         <span>일일 절약량: <span className="text-green-400">{savedPerDay.toFixed(1)}개</span></span>
+                    </div>
+                    <div className="text-xs mt-1 pt-1 border-t border-gray-700">
+                        {best.buffer.stable ? (
+                            <span className="text-green-400">
+                                버퍼 안정 (최대 공백 {best.buffer.maxBlankSec?.toFixed(1)}s / 허용 {best.buffer.allowedBlankSec?.toFixed(1)}s)
+                            </span>
+                        ) : (
+                            <span className="text-red-400">
+                                버퍼 불안정 (최대 공백 {best.buffer.maxBlankSec?.toFixed(1)}s &gt; 허용 {best.buffer.allowedBlankSec?.toFixed(1)}s)
+                            </span>
+                        )}
                     </div>
                 </div>
                 <table className="w-full text-xs font-mono">
@@ -223,6 +318,9 @@ function App() {
                     </div>
                     <div className="text-gray-400 mt-1">
                         풀 가동 배터리: {(fullGens * R).toFixed(4)}/s
+                    </div>
+                    <div className="text-gray-400">
+                        예비 전력 버퍼: {BUFFER_MAX.toLocaleString()} (허용 공백: {remainder > 0 ? (BUFFER_MAX / remainder).toFixed(1) : '∞'}s)
                     </div>
                 </div>
             </div>
